@@ -1,7 +1,0 @@
-socksv4
-==========
-
-i do not recommend you to run this over unprotected network.  most of
-the use cases you should only enable socksv4 when it's run locally as
-an intermediate proxy w/ something else.
-

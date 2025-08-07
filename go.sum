@@ -6,3 +6,5 @@ github.com/zedhead037/mdconf v0.0.3 h1:6PxgRpDkfzGu+VFOc5+v/+u4OoACU6Ny/K9Fph3ue
 github.com/zedhead037/mdconf v0.0.3/go.mod h1:DE87sQyOCbjkECi3T3xi6bT4H+0E17EDqMyE91WRxuk=
 github.com/zedhead037/mdconf v0.0.4 h1:rXGO70J+r8sTXBqYqnCDQziN7cy+JzVyq+G9pFi8Jj4=
 github.com/zedhead037/mdconf v0.0.4/go.mod h1:DE87sQyOCbjkECi3T3xi6bT4H+0E17EDqMyE91WRxuk=
+golang.org/x/crypto v0.40.0 h1:r4x+VvoG5Fm+eJcxMaY8CQM7Lb0l1lsmjGBQ6s8BfKM=
+golang.org/x/crypto v0.40.0/go.mod h1:Qr1vMER5WyS2dfPHAlsOj01wgLbsyWtFn/aY+5+ZdxY=

@@ -16,17 +16,11 @@ import (
 	"github.com/zedhead037/mdconf"
 )
 
-var KEY_SOCKS_CLIENTMODE_ENABLE = []string{"socks", "clientMode", "enable"}
-var KEY_SOCKS_CLIENTMODE_SERVERADDR = []string{"socks", "clientMode", "serverAddr"}
-var KEY_SOCKS_CLIENTMODE_SERVERPORT = []string{"socks", "clientMode", "serverPort"}
-var KEY_SOCKS_CLIENTMODE_USERNAME = []string{"socks", "clientMode", "username"}
-var KEY_SOCKS_CLIENTMODE_PASSWORD = []string{"socks", "clientMode", "password"}
-var KEY_SOCKS_V4_ENABLE = []string{"socks", "v4", "enable"}
-var KEY_SOCKS_V4_BINDADDR = []string{"socks", "v4", "bindAddr"}
-var KEY_SOCKS_V4_BINDPORT = []string{"socks", "v4", "bindPort"}
-var KEY_SOCKS_V5_ENABLE = []string{"socks", "v5", "enable"}
-var KEY_SOCKS_V5_BINDADDR = []string{"socks", "v5", "bindAddr"}
-var KEY_SOCKS_V5_BINDPORT = []string{"socks", "v5", "bindPort"}
+type GlobalContext struct {
+	Config *mdconf.MDConfSection
+	SOCKSv5UserDatabase UserDatabase
+}
+
 
 func initConfigAt(configPath string) *mdconf.MDConfSection {
 	res := new(mdconf.MDConfSection)
@@ -39,6 +33,8 @@ func initConfigAt(configPath string) *mdconf.MDConfSection {
 	v5.LocalSetKey("enable", "true")
 	v5.LocalSetKey("bindAddr", "127.0.0.1")
 	v5.LocalSetKey("bindPort", "1080")
+	v5.LocalSetKey(LOCAL_KEY_USEAUTH, "false")
+	v5.LocalSetKey(LOCAL_KEY_USERDATABASE, "")
     clientMode, _ := socks.LocalAddSection("clientMode")
 	clientMode.LocalSetKey("enable", "false")
 	clientMode.LocalSetKey("serverAddr", "")
@@ -49,7 +45,7 @@ func initConfigAt(configPath string) *mdconf.MDConfSection {
 	return res
 }
 
-func handleSocks4(buf []byte, conn net.Conn) {
+func handleSocks4(gctx *GlobalContext, buf []byte, conn net.Conn) {
 	destPort := binary.BigEndian.Uint16(buf[2:4])
 	destIP := net.IPv4(buf[4], buf[5], buf[6], buf[7])
 	destAddr := fmt.Sprintf("%s:%d", destIP.String(), destPort)
@@ -68,14 +64,51 @@ func handleSocks4(buf []byte, conn net.Conn) {
 	io.Copy(conn, target)
 }
 
-func handleSocks5(buf []byte, conn net.Conn) {
+func handleSocks5(gctx *GlobalContext, buf []byte, conn net.Conn) {
+	var useAuth bool
+	useAuthStr, err := gctx.Config.QueryKey(KEY_SOCKS_V5_USEAUTH)
+	if err != nil || useAuthStr != "true" {
+		useAuth = false
+	} else {
+		useAuth = true
+		log.Printf("[SOCKSv5] username/password auth enabled according to conf | %s\n", conn.RemoteAddr())
+	}
+	if useAuth {
+		canUseAuth := false
+		for i := range buf[1] {
+			if buf[2+i] == 0x02 { canUseAuth = true; break }
+		}
+		if !canUseAuth {
+			conn.Write([]byte{0x05, 0xff})
+			log.Printf("[SOCKSv5] client failed to support username auth | %s\n", conn.RemoteAddr())
+			return
+		}
+		_, err := conn.Read(buf)
+		if err != nil {
+			conn.Write([]byte{0x01, 0xff})
+			return
+		}
+		ulen := int(buf[1])
+		username := buf[2:2+ulen]
+		plen := int(buf[2+ulen])
+		password := buf[2+ulen+1:2+ulen+1+plen]
+		log.Printf("[SOCKSv5] client requested auth for ==%s== | %s\n", username, conn.RemoteAddr())
+		chkres := gctx.SOCKSv5UserDatabase.Check(string(username), string(password))
+		if chkres != nil {
+			conn.Write([]byte{0x01, 0xff})
+			log.Printf("[SOCKSv5] client failed username/password check | %s\n", conn.RemoteAddr())
+			return
+		}
+		conn.Write([]byte{0x01, 0x00})
+	}
+	
 	i := 1
 	// ignore everything & use no auth.
 	conn.Write([]byte{0x05, 0x00})
-	_, err := conn.Read(buf)
+	_, err = conn.Read(buf)
 	if err != nil {
 		conn.Write([]byte{0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-		conn.Close()
+		return
 	}
 	reqDstAddrType := buf[3]
 	var reqDstAddr string
@@ -121,7 +154,7 @@ func handleSocks5(buf []byte, conn net.Conn) {
 	io.Copy(conn, target)
 }
 
-func handleSocksClient(conn net.Conn) {
+func handleSocksClient(gctx *GlobalContext, conn net.Conn) {
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
@@ -133,30 +166,27 @@ func handleSocksClient(conn net.Conn) {
 
 	switch buf[0] {
 	case 4: // socks 4
-		if buf[1] != 0x01 { // not CONNECT
-			return
-		}
-		handleSocks4(buf, conn)
+		handleSocks4(gctx, buf, conn)
 	case 5: // socks
-		handleSocks5(buf, conn)
+		handleSocks5(gctx, buf, conn)
 	}
 
 }
 
-func handleSocksv4Only(conn net.Conn) {
+func handleSocksv4Only(gctx *GlobalContext, conn  net.Conn) {
 	defer conn.Close()
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil || n < 9 { return }
-	if buf[0] == 4 { handleSocks4(buf, conn) }
+	if buf[0] == 4 { handleSocks4(gctx, buf, conn) }
 }
 
-func handleSocksv5Only(conn net.Conn) {
+func handleSocksv5Only(gctx *GlobalContext, conn net.Conn) {
 	defer conn.Close()
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil || n < 3 { return }
-	if buf[0] == 5 { handleSocks5(buf, conn) }
+	if buf[0] == 5 { handleSocks5(gctx, buf, conn) }
 }
 
 func isIPv6(s string) bool {
@@ -178,7 +208,7 @@ func main() {
 	configArg := argparse.String("config", "", "Specify the path to the config file.")
 	argparse.Parse(os.Args[1:])
 	var configPath string
-	if configArg == nil {
+	if configArg != nil && (len(*configArg) > 0) {
 		configPath = *configArg
 	} else {
 		homeDir, err := os.UserHomeDir()
@@ -189,6 +219,7 @@ func main() {
 	var config *mdconf.MDConfSection
 	configFile, err := os.Open(configPath)
 	if err != nil {
+
 		if os.IsNotExist(err) {
 			log.Println("Cannot find any config file. Creating one...")
 			config = initConfigAt(configPath)
@@ -199,6 +230,9 @@ func main() {
 		config = mdconf.Parse(configFile)
 		err = configFile.Close()
 		if err != nil { log.Fatal(err.Error()) }
+	}
+	gctx := &GlobalContext{
+		Config: config,
 	}
 	
 	var socksv4Enable bool = false
@@ -227,25 +261,64 @@ func main() {
 		log.Fatal("Cannot use the same port but have different bind address.")
 	}
 
+	if socksv5Enable {
+		useAuthStr, err := config.QueryKey(KEY_SOCKS_V5_USEAUTH)
+		if err == nil && useAuthStr == "true" {
+			userdbPath, err := config.QueryKey(KEY_SOCKS_V5_USERDATABASE)
+			if err == nil {
+				db, err := loadUserDatabase(userdbPath)
+				if err == nil {
+					gctx.SOCKSv5UserDatabase = db
+				}
+			}
+		}
+	}
+
 	var socksv4Listener net.Listener
 	var socksv5Listener net.Listener
-
 	if socksv4BindPort == socksv5BindPort {
+		// this is slightly more complicated because some client would
+		// send v4 and v5 messages to the same port even if configured
+		// to be v4 only.  (looking at you, SwitchyOmega)
 		fulladdr := toFullAddr(socksv4BindAddr, socksv4BindPort)
 		listener, err := net.Listen("tcp", fulladdr)
 		if err != nil { log.Fatal(err) }
-		socksv4Listener = listener
-		socksv5Listener = listener
-		log.Printf("[SOCKSv4] Listening on %s", fulladdr)
-		log.Printf("[SOCKSv5] Listening on %s", fulladdr)
-		go func(){
-			for {
-				conn, err := listener.Accept()
-				log.Printf("Accepted: %s\n", conn.RemoteAddr().String())
-				if err != nil { continue }
-				go handleSocksClient(conn)
-			}
-		}()
+		if socksv4Enable && socksv5Enable {
+			socksv4Listener = listener
+			socksv5Listener = listener
+			log.Printf("[SOCKSv4] Listening on %s", fulladdr)
+			log.Printf("[SOCKSv5] Listening on %s", fulladdr)
+			go func(){
+				for {
+					conn, err := listener.Accept()
+					log.Printf("Accepted: %s\n", conn.RemoteAddr().String())
+					if err != nil { continue }
+					go handleSocksClient(gctx, conn)
+				}
+			}()
+		} else if socksv4Enable {
+			socksv4Listener = listener
+			log.Printf("[SOCKSv4] Listening on %s", fulladdr)
+			go func(){
+				for {
+					conn, err := listener.Accept()
+					if err != nil { continue }
+					log.Printf("[SOCKSv4] Accepted: %s\n", conn.RemoteAddr().String())
+					go handleSocksv4Only(gctx, conn)
+				}
+			}()
+		} else if socksv5Enable {
+			socksv5Listener = listener
+			log.Printf("[SOCKSv5] Listening on %s", fulladdr)
+			go func(){
+				for {
+					conn, err := listener.Accept()					
+					if err != nil { continue }
+					log.Printf("[SOCKSv5] Accepted: %s\n", conn.RemoteAddr().String())
+					go handleSocksv5Only(gctx, conn)
+				}
+			}()
+		}
 	} else {
 		if socksv4Enable {
 			fulladdr := toFullAddr(socksv4BindAddr, socksv4BindPort)
@@ -258,7 +331,7 @@ func main() {
 					conn, err := listener.Accept()
 					if err != nil { continue }
 					log.Printf("[SOCKSv4] Accepted: %s\n", conn.RemoteAddr().String())
-					go handleSocksv4Only(conn)
+					go handleSocksv4Only(gctx, conn)
 				}
 			}()
 		}
@@ -273,7 +346,7 @@ func main() {
 					conn, err := listener.Accept()					
 					if err != nil { continue }
 					log.Printf("[SOCKSv5] Accepted: %s\n", conn.RemoteAddr().String())
-					go handleSocksv5Only(conn)
+					go handleSocksv5Only(gctx, conn)
 				}
 			}()
 		}

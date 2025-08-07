@@ -1,0 +1,31 @@
+SOCKS
+==========
+
+i do *not* recommend you to run SOCKS proxy over unprotected network,
+and you *definitely* shouldn't run SOCKSv4 over unprotected network
+(unless you're such a generous person that you're okay with absolute
+everyone using your proxy and bear the responsibility of all the
+possible consequences), since SOCKSv4 is pretty much a plaintext
+protocol.  this is here only because SOCKS is easy.  the user/password
+auth is supported by storing username and their hashes /etc/passwd
+style.
+
+i only recommend you use the SOCKS part of rope as an emergency
+measure.  support for other types of authentication is planned, but
+you'll have to wait.
+
+
+SOCKSv5 user database
+---------------------
+
+note that this is not intended to be used by many people.  the format
+is as follows:
+
+```
+[username1]:[hash1]
+[username2]:[hash2]
+[username3]:[hash3]
+[username4]:[hash4]
+// ...
+```
+

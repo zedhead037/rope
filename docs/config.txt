@@ -13,7 +13,10 @@ the config should be as follows:
 ## clientMode
 // whether to enable "client mode".
 // in client mode, rope act as a "middle man" between you and
-// another socksv5 proxy 
+// another rope proxy.  the graph would be:
+//     you-----rope(client)-----rope(remote)
+// this is used w/ clients that does not support SOCKSv5 auth,
+// e.g. SwitchyOmega. 
 + enable: [true or false]
 + serverAddr: [server addr]
 + serverPort: [server port]
@@ -36,5 +39,7 @@ the config should be as follows:
 + bindAddr: [bind address]
 // bind port.  (1080 by default)
 + bindPort: [bind port]
++ useAuth: [true or false]
++ userDatabase: [path to user database, resolved against home dir]
 ```
 
